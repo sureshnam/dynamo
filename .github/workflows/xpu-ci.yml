@@ -86,7 +86,7 @@ jobs:
 
       - name: Build XPU runtime image
         run: |
-          docker build \
+          DOCKER_BUILDKIT=1 docker build \
             --network=host \
             --build-arg TARGETARCH=amd64 \
             --build-arg DYNAMO_COMMIT_SHA=${{ github.sha }} \
@@ -100,7 +100,7 @@ jobs:
       - name: Build XPU test image
         run: |
           if [ -f container/Dockerfile.test ]; then
-            docker build \
+            DOCKER_BUILDKIT=1 docker build \
               --network=host \
               --build-arg BASE_IMAGE=${{ env.XPU_IMAGE_TAG }} \
               --build-arg http_proxy=http://proxy-dmz.intel.com:911/ \
