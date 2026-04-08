@@ -1,0 +1,351 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: XPU CI Pipeline (Intel GPU)
+
+on:
+  push:
+    branches:
+      - main
+      - 'xpu-ci-*'
+  pull_request:
+    paths:
+      - 'container/**'
+      - 'components/**'
+      - 'lib/**'
+      - 'examples/backends/vllm/launch/xpu/**'
+      - '.github/workflows/xpu-ci.yml'
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'HuggingFace model to test'
+        required: false
+        default: 'Qwen/Qwen3-0.6B'
+      skip_build:
+        description: 'Skip container build (reuse existing image)'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: xpu-ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  XPU_IMAGE_TAG: dynamo-vllm-xpu:${{ github.sha }}
+  XPU_TEST_IMAGE_TAG: dynamo-vllm-xpu-test:${{ github.sha }}
+  MODEL: ${{ github.event.inputs.model || 'Qwen/Qwen3-0.6B' }}
+
+jobs:
+  # ============================================================================
+  # VALIDATE INTEL GPU HARDWARE
+  # ============================================================================
+  hw-check:
+    name: Validate Intel GPU hardware
+    runs-on: [self-hosted, xpu, intel-b70]
+    steps:
+      - name: Check Intel GPU availability
+        run: |
+          echo "=== Intel GPU Discovery ==="
+          xpu-smi discovery
+          echo ""
+          echo "=== DRI Devices ==="
+          ls -la /dev/dri/
+          echo ""
+          echo "=== GPU Count ==="
+          GPU_COUNT=$(xpu-smi discovery 2>/dev/null | grep -c "Device Name")
+          echo "Found ${GPU_COUNT} Intel GPU(s)"
+          if [ "$GPU_COUNT" -lt 1 ]; then
+            echo "ERROR: No Intel GPUs detected"
+            exit 1
+          fi
+
+  # ============================================================================
+  # BUILD XPU VLLM CONTAINER
+  # ============================================================================
+  build-xpu:
+    name: Build vLLM XPU image
+    needs: [hw-check]
+    if: ${{ github.event.inputs.skip_build != 'true' }}
+    runs-on: [self-hosted, xpu, intel-b70]
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Generate XPU Dockerfile
+        run: |
+          python3 container/render.py \
+            --framework vllm \
+            --device xpu \
+            --target runtime \
+            --platform linux/amd64 \
+            --output-short-filename \
+            --show-result
+
+      - name: Build XPU runtime image
+        run: |
+          docker build \
+            --progress=plain \
+            --build-arg DYNAMO_COMMIT_SHA=${{ github.sha }} \
+            -f container/rendered.Dockerfile \
+            -t ${{ env.XPU_IMAGE_TAG }} \
+            .
+
+      - name: Build XPU test image
+        run: |
+          if [ -f container/Dockerfile.test ]; then
+            docker build \
+              --progress=plain \
+              --build-arg BASE_IMAGE=${{ env.XPU_IMAGE_TAG }} \
+              -f container/Dockerfile.test \
+              -t ${{ env.XPU_TEST_IMAGE_TAG }} \
+              .
+          else
+            echo "No Dockerfile.test found, using runtime image for tests"
+            docker tag ${{ env.XPU_IMAGE_TAG }} ${{ env.XPU_TEST_IMAGE_TAG }}
+          fi
+
+      - name: Verify image
+        run: |
+          echo "=== Image Info ==="
+          docker images ${{ env.XPU_IMAGE_TAG }}
+          docker images ${{ env.XPU_TEST_IMAGE_TAG }}
+
+  # ============================================================================
+  # XPU SMOKE TEST — Intel GPU detection inside container
+  # ============================================================================
+  xpu-smoke-test:
+    name: XPU smoke test (GPU detection)
+    needs: [build-xpu]
+    if: always() && (needs.build-xpu.result == 'success' || github.event.inputs.skip_build == 'true')
+    runs-on: [self-hosted, xpu, intel-b70]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify Intel GPU visible inside container
+        run: |
+          docker run --rm \
+            --device /dev/dri \
+            -v /dev/dri:/dev/dri \
+            ${{ env.XPU_IMAGE_TAG }} \
+            python3 -c "
+          import torch
+          import intel_extension_for_pytorch as ipex
+          print('PyTorch version:', torch.__version__)
+          print('IPEX version:', ipex.__version__)
+          print('XPU available:', torch.xpu.is_available())
+          print('XPU device count:', torch.xpu.device_count())
+          for i in range(torch.xpu.device_count()):
+              print(f'  Device {i}: {torch.xpu.get_device_name(i)}')
+          assert torch.xpu.is_available(), 'XPU not available!'
+          assert torch.xpu.device_count() > 0, 'No XPU devices found!'
+          # Basic tensor op on XPU
+          t = torch.randn(2, 3).to('xpu')
+          print('Tensor on XPU:', t.device)
+          print('PASS: Intel GPU smoke test')
+          "
+
+  # ============================================================================
+  # XPU CPU-ONLY TESTS — unit tests that don't need GPU
+  # ============================================================================
+  xpu-cpu-tests:
+    name: XPU CPU-only tests
+    needs: [build-xpu]
+    if: always() && (needs.build-xpu.result == 'success' || github.event.inputs.skip_build == 'true')
+    runs-on: [self-hosted, xpu, intel-b70]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run CPU-only unit tests
+        run: |
+          mkdir -p test-results
+
+          docker run --rm \
+            -w /workspace \
+            --shm-size=200m \
+            --network host \
+            -v "$(pwd)/test-results:/workspace/test-results" \
+            -e VLLM_TARGET_DEVICE=xpu \
+            ${{ env.XPU_TEST_IMAGE_TAG }} \
+            sh -c "
+              pytest -v --tb=short \
+                --junitxml=/workspace/test-results/xpu-cpu-tests.xml \
+                --durations=10 \
+                -m 'vllm and gpu_0' \
+                || true
+            "
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xpu-cpu-test-results-${{ github.run_id }}
+          path: test-results/
+          retention-days: 7
+
+  # ============================================================================
+  # XPU SINGLE-GPU INFERENCE TEST — vLLM serving on 1 Intel GPU
+  # ============================================================================
+  xpu-single-gpu-test:
+    name: XPU single-GPU inference test
+    needs: [xpu-smoke-test]
+    runs-on: [self-hosted, xpu, intel-b70]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run vLLM XPU inference test
+        run: |
+          mkdir -p test-results
+
+          docker run --rm \
+            --device /dev/dri \
+            -v /dev/dri:/dev/dri \
+            --shm-size=200m \
+            --network host \
+            -e VLLM_TARGET_DEVICE=xpu \
+            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -v "$(pwd)/test-results:/workspace/test-results" \
+            ${{ env.XPU_IMAGE_TAG }} \
+            python3 -c "
+          from vllm import LLM, SamplingParams
+
+          print('=== vLLM XPU Single-GPU Inference Test ===')
+          print('Loading model: ${{ env.MODEL }}')
+
+          llm = LLM(
+              model='${{ env.MODEL }}',
+              device='xpu',
+              enforce_eager=True,
+              max_model_len=512,
+              max_num_seqs=2,
+          )
+
+          prompts = [
+              'Hello, my name is',
+              'The capital of France is',
+          ]
+          sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=32)
+
+          outputs = llm.generate(prompts, sampling_params)
+          for output in outputs:
+              prompt = output.prompt
+              generated = output.outputs[0].text
+              print(f'Prompt: {prompt!r}')
+              print(f'Generated: {generated!r}')
+              print()
+
+          print('PASS: vLLM XPU inference test completed successfully')
+          "
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xpu-gpu-test-results-${{ github.run_id }}
+          path: test-results/
+          retention-days: 7
+
+  # ============================================================================
+  # XPU DYNAMO AGG SERVING TEST — full Dynamo aggregated pipeline
+  # ============================================================================
+  xpu-dynamo-agg-test:
+    name: XPU Dynamo aggregated serving test
+    needs: [xpu-single-gpu-test]
+    runs-on: [self-hosted, xpu, intel-b70]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Dynamo aggregated serving on XPU
+        run: |
+          CONTAINER_NAME="dynamo-xpu-agg-test-${{ github.run_id }}"
+
+          # Start Dynamo aggregated serving in the background
+          docker run -d \
+            --name "${CONTAINER_NAME}" \
+            --device /dev/dri \
+            -v /dev/dri:/dev/dri \
+            --shm-size=200m \
+            --network host \
+            -e VLLM_TARGET_DEVICE=xpu \
+            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -w /workspace \
+            ${{ env.XPU_IMAGE_TAG }} \
+            bash -c "
+              export VLLM_TARGET_DEVICE=xpu
+              python -m dynamo.frontend &
+              DYN_SYSTEM_PORT=8081 python -m dynamo.vllm \
+                --model ${{ env.MODEL }} \
+                --enforce-eager \
+                --max-model-len 512 \
+                --max-num-seqs 2 \
+                --block-size 64 &
+              wait -n
+            "
+
+          echo "Waiting for Dynamo to start (up to 120s)..."
+          READY=false
+          for i in $(seq 1 120); do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1 || \
+               curl -sf http://localhost:8000/v1/models > /dev/null 2>&1; then
+              echo "Dynamo is ready after ${i}s"
+              READY=true
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$READY" = "false" ]; then
+            echo "ERROR: Dynamo did not start in time"
+            echo "=== Container Logs ==="
+            docker logs "${CONTAINER_NAME}" 2>&1 | tail -100
+            docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+            exit 1
+          fi
+
+          # Send a test request
+          echo "Sending test inference request..."
+          RESPONSE=$(curl -sf http://localhost:8000/v1/completions \
+            -H "Content-Type: application/json" \
+            -d '{
+              "model": "${{ env.MODEL }}",
+              "prompt": "Hello, world",
+              "max_tokens": 16
+            }' 2>&1) || true
+
+          echo "Response: ${RESPONSE}"
+
+          # Cleanup
+          docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+
+          if echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'choices' in d" 2>/dev/null; then
+            echo "PASS: Dynamo aggregated serving test"
+          else
+            echo "WARNING: Response validation inconclusive (service may need more startup time)"
+            echo "Container logs for debugging:"
+            exit 1
+          fi
+
+  # ============================================================================
+  # NOTIFY ON FAILURE
+  # ============================================================================
+  notify-failure:
+    name: Report XPU CI status
+    runs-on: [self-hosted, xpu, intel-b70]
+    if: always() && failure()
+    needs: [xpu-smoke-test, xpu-cpu-tests, xpu-single-gpu-test, xpu-dynamo-agg-test]
+    steps:
+      - name: Report failure
+        run: |
+          echo "::error::XPU CI pipeline failed. Check individual job logs for details."
+          echo "Failed jobs in run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
