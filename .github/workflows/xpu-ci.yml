@@ -219,6 +219,11 @@ jobs:
             --network host \
             -e VLLM_TARGET_DEVICE=xpu \
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e https_proxy=http://proxy-dmz.intel.com:912/ \
+            -e http_proxy=http://proxy-dmz.intel.com:911/ \
+            -e no_proxy=localhost,127.0.0.1,10.0.0.0/8 \
+            -e HF_HOME=/models \
+            -v /mnt/weka/data/llm-d-models-pv:/models \
             -v "$(pwd)/test-results:/workspace/test-results" \
             ${{ env.XPU_IMAGE_TAG }} \
             bash -c "source /etc/bash.bashrc && python3 -c \"
@@ -284,6 +289,11 @@ jobs:
             --network host \
             -e VLLM_TARGET_DEVICE=xpu \
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e https_proxy=http://proxy-dmz.intel.com:912/ \
+            -e http_proxy=http://proxy-dmz.intel.com:911/ \
+            -e no_proxy=localhost,127.0.0.1,10.0.0.0/8 \
+            -e HF_HOME=/models \
+            -v /mnt/weka/data/llm-d-models-pv:/models \
             -w /workspace \
             ${{ env.XPU_IMAGE_TAG }} \
             bash -c "
