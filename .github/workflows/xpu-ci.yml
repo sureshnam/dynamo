@@ -88,6 +88,7 @@ jobs:
         run: |
           docker build \
             --network=host \
+            --build-arg TARGETARCH=amd64 \
             --build-arg DYNAMO_COMMIT_SHA=${{ github.sha }} \
             -f container/rendered.Dockerfile \
             -t ${{ env.XPU_IMAGE_TAG }} \
