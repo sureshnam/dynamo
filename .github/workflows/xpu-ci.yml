@@ -87,7 +87,7 @@ jobs:
       - name: Build XPU runtime image
         run: |
           docker build \
-            --progress=plain \
+            --network=host \
             --build-arg DYNAMO_COMMIT_SHA=${{ github.sha }} \
             -f container/rendered.Dockerfile \
             -t ${{ env.XPU_IMAGE_TAG }} \
@@ -97,7 +97,7 @@ jobs:
         run: |
           if [ -f container/Dockerfile.test ]; then
             docker build \
-              --progress=plain \
+              --network=host \
               --build-arg BASE_IMAGE=${{ env.XPU_IMAGE_TAG }} \
               -f container/Dockerfile.test \
               -t ${{ env.XPU_TEST_IMAGE_TAG }} \
