@@ -46,17 +46,14 @@ jobs:
     steps:
       - name: Check Intel GPU availability
         run: |
-          echo "=== Intel GPU Discovery ==="
-          xpu-smi discovery
-          echo ""
-          echo "=== DRI Devices ==="
+          echo "=== DRI Render Devices ==="
           ls -la /dev/dri/
           echo ""
           echo "=== GPU Count ==="
-          GPU_COUNT=$(xpu-smi discovery 2>/dev/null | grep -c "Device Name")
-          echo "Found ${GPU_COUNT} Intel GPU(s)"
+          GPU_COUNT=$(ls /dev/dri/renderD* 2>/dev/null | wc -l)
+          echo "Found ${GPU_COUNT} Intel GPU render device(s)"
           if [ "$GPU_COUNT" -lt 1 ]; then
-            echo "ERROR: No Intel GPUs detected"
+            echo "ERROR: No Intel GPU render devices detected in /dev/dri/"
             exit 1
           fi
 
