@@ -169,6 +169,7 @@ jobs:
       - name: Run CPU-only unit tests
         run: |
           mkdir -p test-results
+          chmod 777 test-results
 
           docker run --rm \
             -w /workspace \
@@ -178,7 +179,9 @@ jobs:
             -e VLLM_TARGET_DEVICE=xpu \
             ${{ env.XPU_TEST_IMAGE_TAG }} \
             sh -c "
+              chmod 777 /workspace/test-results &&
               pytest -v --tb=short \
+                --continue-on-collection-errors \
                 --junitxml=/workspace/test-results/xpu-cpu-tests.xml \
                 --durations=10 \
                 -m 'vllm and gpu_0' \
