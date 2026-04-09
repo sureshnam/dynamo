@@ -1,9 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# XPU CI for Intel Battlemage B70 GPUs on self-hosted runner
 
-name: XPU CI Pipeline (Intel B70)
+name: XPU CI Pipeline (Intel GPU)
 
 on:
   push:
@@ -45,19 +43,44 @@ jobs:
   hw-check:
     name: Validate Intel GPU hardware
     runs-on: [self-hosted, xpu, intel-b70]
+    outputs:
+      xpu_docker_env: ${{ steps.detect-gpu.outputs.xpu_docker_env }}
+      gpu_type: ${{ steps.detect-gpu.outputs.gpu_type }}
     steps:
       - name: Check Intel GPU availability
         run: |
-          echo "=== DRI Render Devices ==="
+          echo "=== Intel GPU Discovery ==="
+          xpu-smi discovery
+          echo ""
+          echo "=== DRI Devices ==="
           ls -la /dev/dri/
           echo ""
           echo "=== GPU Count ==="
-          GPU_COUNT=$(ls /dev/dri/renderD* 2>/dev/null | wc -l)
-          echo "Found ${GPU_COUNT} Intel GPU render device(s)"
+          GPU_COUNT=$(xpu-smi discovery 2>/dev/null | grep -c "Device Name")
+          echo "Found ${GPU_COUNT} Intel GPU(s)"
           if [ "$GPU_COUNT" -lt 1 ]; then
-            echo "ERROR: No Intel GPU render devices detected in /dev/dri/"
+            echo "ERROR: No Intel GPUs detected"
             exit 1
           fi
+
+      - name: Detect GPU type and set runtime env
+        id: detect-gpu
+        run: |
+          GPU_NAME=$(xpu-smi discovery 2>/dev/null | grep "Device Name" | head -1 | sed 's/.*: *//')
+          echo "Detected GPU: ${GPU_NAME}"
+
+          # Consumer Arc GPUs (B580, A770, etc.) need the V1 Level Zero UR adapter
+          # Data center GPUs (B70, Max series) work with the default V2 adapter
+          DOCKER_ENV=""
+          if echo "${GPU_NAME}" | grep -qiE 'Arc.*B580|Arc.*A770|Arc.*A750|Arc.*A580|Arc.*B570'; then
+            echo "Consumer Arc GPU detected — forcing Level Zero V1 UR adapter"
+            DOCKER_ENV="-e UR_ADAPTERS_FORCE_LOAD=/opt/dynamo/venv/lib/libur_adapter_level_zero.so"
+            echo "gpu_type=arc-consumer" >> "$GITHUB_OUTPUT"
+          else
+            echo "Data center GPU detected — using default V2 UR adapter"
+            echo "gpu_type=data-center" >> "$GITHUB_OUTPUT"
+          fi
+          echo "xpu_docker_env=${DOCKER_ENV}" >> "$GITHUB_OUTPUT"
 
   # ============================================================================
   # BUILD XPU VLLM CONTAINER
@@ -86,13 +109,9 @@ jobs:
 
       - name: Build XPU runtime image
         run: |
-          DOCKER_BUILDKIT=1 docker build \
-            --network=host \
-            --build-arg TARGETARCH=amd64 \
+          docker build \
+            --progress=plain \
             --build-arg DYNAMO_COMMIT_SHA=${{ github.sha }} \
-            --build-arg http_proxy=http://proxy-dmz.intel.com:911/ \
-            --build-arg https_proxy=http://proxy-dmz.intel.com:912/ \
-            --build-arg no_proxy=localhost,127.0.0.1,10.0.0.0/8,intel.com,.intel.com \
             -f container/rendered.Dockerfile \
             -t ${{ env.XPU_IMAGE_TAG }} \
             .
@@ -100,12 +119,9 @@ jobs:
       - name: Build XPU test image
         run: |
           if [ -f container/Dockerfile.test ]; then
-            DOCKER_BUILDKIT=1 docker build \
-              --network=host \
+            docker build \
+              --progress=plain \
               --build-arg BASE_IMAGE=${{ env.XPU_IMAGE_TAG }} \
-              --build-arg http_proxy=http://proxy-dmz.intel.com:911/ \
-              --build-arg https_proxy=http://proxy-dmz.intel.com:912/ \
-              --build-arg no_proxy=localhost,127.0.0.1,10.0.0.0/8,intel.com,.intel.com \
               -f container/Dockerfile.test \
               -t ${{ env.XPU_TEST_IMAGE_TAG }} \
               .
@@ -125,7 +141,7 @@ jobs:
   # ============================================================================
   xpu-smoke-test:
     name: XPU smoke test (GPU detection)
-    needs: [build-xpu]
+    needs: [hw-check, build-xpu]
     if: always() && (needs.build-xpu.result == 'success' || github.event.inputs.skip_build == 'true')
     runs-on: [self-hosted, xpu, intel-b70]
     timeout-minutes: 10
@@ -138,27 +154,34 @@ jobs:
           docker run --rm \
             --device /dev/dri \
             -v /dev/dri:/dev/dri \
+            ${{ needs.hw-check.outputs.xpu_docker_env }} \
             ${{ env.XPU_IMAGE_TAG }} \
-            bash -c "source /etc/bash.bashrc && python3 -c \"
+            python3 -c "
           import torch
           print('PyTorch version:', torch.__version__)
+          try:
+              import intel_extension_for_pytorch as ipex
+              print('IPEX version:', ipex.__version__)
+          except ImportError:
+              print('IPEX: not installed (not required for PyTorch >= 2.10)')
           print('XPU available:', torch.xpu.is_available())
           print('XPU device count:', torch.xpu.device_count())
           for i in range(torch.xpu.device_count()):
               print(f'  Device {i}: {torch.xpu.get_device_name(i)}')
           assert torch.xpu.is_available(), 'XPU not available!'
           assert torch.xpu.device_count() > 0, 'No XPU devices found!'
+          # Basic tensor op on XPU
           t = torch.randn(2, 3).to('xpu')
           print('Tensor on XPU:', t.device)
           print('PASS: Intel GPU smoke test')
-          \""
+          "
 
   # ============================================================================
   # XPU CPU-ONLY TESTS — unit tests that don't need GPU
   # ============================================================================
   xpu-cpu-tests:
     name: XPU CPU-only tests
-    needs: [build-xpu]
+    needs: [hw-check, build-xpu]
     if: always() && (needs.build-xpu.result == 'success' || github.event.inputs.skip_build == 'true')
     runs-on: [self-hosted, xpu, intel-b70]
     timeout-minutes: 30
@@ -169,7 +192,6 @@ jobs:
       - name: Run CPU-only unit tests
         run: |
           mkdir -p test-results
-          chmod 777 test-results
 
           docker run --rm \
             -w /workspace \
@@ -179,9 +201,7 @@ jobs:
             -e VLLM_TARGET_DEVICE=xpu \
             ${{ env.XPU_TEST_IMAGE_TAG }} \
             sh -c "
-              chmod 777 /workspace/test-results &&
               pytest -v --tb=short \
-                --continue-on-collection-errors \
                 --junitxml=/workspace/test-results/xpu-cpu-tests.xml \
                 --durations=10 \
                 -m 'vllm and gpu_0' \
@@ -201,7 +221,7 @@ jobs:
   # ============================================================================
   xpu-single-gpu-test:
     name: XPU single-GPU inference test
-    needs: [xpu-smoke-test]
+    needs: [hw-check, xpu-smoke-test]
     runs-on: [self-hosted, xpu, intel-b70]
     timeout-minutes: 30
     steps:
@@ -219,14 +239,10 @@ jobs:
             --network host \
             -e VLLM_TARGET_DEVICE=xpu \
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
-            -e https_proxy=http://proxy-dmz.intel.com:912/ \
-            -e http_proxy=http://proxy-dmz.intel.com:911/ \
-            -e no_proxy=localhost,127.0.0.1,10.0.0.0/8 \
-            -e HF_HOME=/models \
-            -v /mnt/weka/data/llm-d-models-pv:/models \
+            ${{ needs.hw-check.outputs.xpu_docker_env }} \
             -v "$(pwd)/test-results:/workspace/test-results" \
             ${{ env.XPU_IMAGE_TAG }} \
-            bash -c "source /etc/bash.bashrc && python3 -c \"
+            python3 -c "
           from vllm import LLM, SamplingParams
 
           print('=== vLLM XPU Single-GPU Inference Test ===')
@@ -234,6 +250,7 @@ jobs:
 
           llm = LLM(
               model='${{ env.MODEL }}',
+              device='xpu',
               enforce_eager=True,
               max_model_len=512,
               max_num_seqs=2,
@@ -254,7 +271,7 @@ jobs:
               print()
 
           print('PASS: vLLM XPU inference test completed successfully')
-          \""
+          "
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -269,7 +286,7 @@ jobs:
   # ============================================================================
   xpu-dynamo-agg-test:
     name: XPU Dynamo aggregated serving test
-    needs: [xpu-single-gpu-test]
+    needs: [hw-check, xpu-single-gpu-test]
     runs-on: [self-hosted, xpu, intel-b70]
     timeout-minutes: 30
     steps:
@@ -289,11 +306,7 @@ jobs:
             --network host \
             -e VLLM_TARGET_DEVICE=xpu \
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
-            -e https_proxy=http://proxy-dmz.intel.com:912/ \
-            -e http_proxy=http://proxy-dmz.intel.com:911/ \
-            -e no_proxy=localhost,127.0.0.1,10.0.0.0/8 \
-            -e HF_HOME=/models \
-            -v /mnt/weka/data/llm-d-models-pv:/models \
+            ${{ needs.hw-check.outputs.xpu_docker_env }} \
             -w /workspace \
             ${{ env.XPU_IMAGE_TAG }} \
             bash -c "
