@@ -136,6 +136,11 @@ jobs:
           docker build \
             --progress=plain \
             --build-arg DYNAMO_COMMIT_SHA=${{ github.sha }} \
+            --build-arg http_proxy=${http_proxy:-} \
+            --build-arg https_proxy=${https_proxy:-} \
+            --build-arg HTTP_PROXY=${HTTP_PROXY:-} \
+            --build-arg HTTPS_PROXY=${HTTPS_PROXY:-} \
+            --build-arg no_proxy=${no_proxy:-} \
             -f container/rendered.Dockerfile \
             -t ${{ env.XPU_IMAGE_TAG }} \
             .
@@ -146,6 +151,11 @@ jobs:
             docker build \
               --progress=plain \
               --build-arg BASE_IMAGE=${{ env.XPU_IMAGE_TAG }} \
+              --build-arg http_proxy=${http_proxy:-} \
+              --build-arg https_proxy=${https_proxy:-} \
+              --build-arg HTTP_PROXY=${HTTP_PROXY:-} \
+              --build-arg HTTPS_PROXY=${HTTPS_PROXY:-} \
+              --build-arg no_proxy=${no_proxy:-} \
               -f container/Dockerfile.test \
               -t ${{ env.XPU_TEST_IMAGE_TAG }} \
               .
