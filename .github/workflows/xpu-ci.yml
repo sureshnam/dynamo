@@ -47,32 +47,56 @@ jobs:
       xpu_docker_env: ${{ steps.detect-gpu.outputs.xpu_docker_env }}
       gpu_type: ${{ steps.detect-gpu.outputs.gpu_type }}
     steps:
-      - name: Check Intel GPU availability
+      - name: Check Intel GPU availability and detect type
+        id: detect-gpu
         run: |
           echo "=== Intel GPU Discovery ==="
-          xpu-smi discovery
+          # Use lspci (always available) to detect Intel GPUs
+          if command -v lspci &>/dev/null; then
+            lspci | grep -iE 'VGA|Display|3D' || true
+          fi
           echo ""
           echo "=== DRI Devices ==="
           ls -la /dev/dri/
           echo ""
-          echo "=== GPU Count ==="
-          GPU_COUNT=$(xpu-smi discovery 2>/dev/null | grep -c "Device Name")
-          echo "Found ${GPU_COUNT} Intel GPU(s)"
+
+          # Count render devices as GPU count
+          GPU_COUNT=$(ls /dev/dri/renderD* 2>/dev/null | wc -l)
+          echo "Found ${GPU_COUNT} Intel GPU render device(s)"
           if [ "$GPU_COUNT" -lt 1 ]; then
-            echo "ERROR: No Intel GPUs detected"
+            echo "ERROR: No Intel GPU render devices detected"
             exit 1
           fi
 
-      - name: Detect GPU type and set runtime env
-        id: detect-gpu
-        run: |
-          GPU_NAME=$(xpu-smi discovery 2>/dev/null | grep "Device Name" | head -1 | sed 's/.*: *//')
+          # Detect GPU model — try multiple methods
+          GPU_NAME=""
+          if command -v xpu-smi &>/dev/null; then
+            GPU_NAME=$(xpu-smi discovery 2>/dev/null | grep "Device Name" | head -1 | sed 's/.*: *//')
+          fi
+          if [ -z "$GPU_NAME" ] && command -v lspci &>/dev/null; then
+            GPU_NAME=$(lspci | grep -iE 'VGA|Display|3D' | grep -i intel | head -1 | sed 's/.*: //')
+          fi
+          if [ -z "$GPU_NAME" ]; then
+            # Fallback: read PCI device ID from sysfs
+            for card in /sys/class/drm/card*/device; do
+              if [ -f "$card/vendor" ]; then
+                VENDOR=$(cat "$card/vendor" 2>/dev/null)
+                DEVICE_ID=$(cat "$card/device" 2>/dev/null)
+                if [ "$VENDOR" = "0x8086" ]; then
+                  GPU_NAME="Intel GPU PCI device ${DEVICE_ID}"
+                  # B580 = 0xe20b, B570 = 0xe20c
+                  break
+                fi
+              fi
+            done
+          fi
           echo "Detected GPU: ${GPU_NAME}"
 
           # Consumer Arc GPUs (B580, A770, etc.) need the V1 Level Zero UR adapter
           # Data center GPUs (B70, Max series) work with the default V2 adapter
           DOCKER_ENV=""
-          if echo "${GPU_NAME}" | grep -qiE 'Arc.*B580|Arc.*A770|Arc.*A750|Arc.*A580|Arc.*B570'; then
+          # Match by name or PCI device ID (B580=0xe20b, B570=0xe20c, A770=0x5690, A750=0x5694)
+          if echo "${GPU_NAME}" | grep -qiE 'B580|A770|A750|A580|B570|0xe20b|0xe20c|0x5690|0x5694'; then
             echo "Consumer Arc GPU detected — forcing Level Zero V1 UR adapter"
             DOCKER_ENV="-e UR_ADAPTERS_FORCE_LOAD=/opt/dynamo/venv/lib/libur_adapter_level_zero.so"
             echo "gpu_type=arc-consumer" >> "$GITHUB_OUTPUT"
