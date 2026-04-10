@@ -410,46 +410,60 @@ jobs:
               wait -n
             "
 
-          echo "Waiting for Dynamo to start (up to 120s)..."
+          # Wait for the model to actually be registered (not just frontend up).
+          # /v1/models returns {"data":[]} until the vLLM worker is fully loaded.
+          echo "Waiting for Dynamo model to be registered (up to 600s)..."
           READY=false
-          for i in $(seq 1 120); do
-            if curl -sf http://localhost:8000/health > /dev/null 2>&1 || \
-               curl -sf http://localhost:8000/v1/models > /dev/null 2>&1; then
-              echo "Dynamo is ready after ${i}s"
+          for i in $(seq 1 600); do
+            MODELS_JSON=$(curl -sf http://localhost:8000/v1/models 2>/dev/null || echo "")
+            if [ -n "$MODELS_JSON" ] && echo "$MODELS_JSON" | grep -q '"id"'; then
+              echo "Dynamo model is ready after ${i}s"
+              echo "Models response: ${MODELS_JSON}"
               READY=true
               break
+            fi
+            if [ $((i % 30)) -eq 0 ]; then
+              echo "Still waiting... (${i}s elapsed)"
             fi
             sleep 1
           done
 
           if [ "$READY" = "false" ]; then
-            echo "ERROR: Dynamo did not start in time"
+            echo "ERROR: Dynamo model did not register in time"
             echo "=== Container Logs ==="
-            docker logs "${CONTAINER_NAME}" 2>&1 | tail -100
+            docker logs "${CONTAINER_NAME}" 2>&1 | tail -200
             docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
             exit 1
           fi
 
-          # Send a test request
+          # Send a test request with retries
           echo "Sending test inference request..."
-          RESPONSE=$(curl -sf http://localhost:8000/v1/completions \
-            -H "Content-Type: application/json" \
-            -d '{
-              "model": "${{ env.MODEL }}",
-              "prompt": "Hello, world",
-              "max_tokens": 16
-            }' 2>&1) || true
+          RESPONSE=""
+          for i in $(seq 1 5); do
+            RESPONSE=$(curl -sf http://localhost:8000/v1/completions \
+              -H "Content-Type: application/json" \
+              -d '{
+                "model": "${{ env.MODEL }}",
+                "prompt": "Hello, world",
+                "max_tokens": 16
+              }' 2>&1) || true
+            if [ -n "$RESPONSE" ] && echo "$RESPONSE" | grep -q '"choices"'; then
+              break
+            fi
+            echo "Attempt ${i} failed, retrying in 5s..."
+            sleep 5
+          done
 
           echo "Response: ${RESPONSE}"
 
-          # Cleanup
-          docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
-
           if echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'choices' in d" 2>/dev/null; then
             echo "PASS: Dynamo aggregated serving test"
+            docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
           else
-            echo "WARNING: Response validation inconclusive (service may need more startup time)"
-            echo "Container logs for debugging:"
+            echo "FAIL: Response validation failed"
+            echo "=== Container Logs (last 200 lines) ==="
+            docker logs "${CONTAINER_NAME}" 2>&1 | tail -200
+            docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
             exit 1
           fi
 
