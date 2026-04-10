@@ -291,6 +291,12 @@ jobs:
             --network host \
             -e VLLM_TARGET_DEVICE=xpu \
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e http_proxy="${http_proxy:-}" \
+            -e https_proxy="${https_proxy:-}" \
+            -e HTTP_PROXY="${HTTP_PROXY:-}" \
+            -e HTTPS_PROXY="${HTTPS_PROXY:-}" \
+            -e no_proxy="${no_proxy:-localhost,127.0.0.1}" \
+            -e NO_PROXY="${NO_PROXY:-localhost,127.0.0.1}" \
             ${{ needs.hw-check.outputs.xpu_docker_groups }} \
             ${{ needs.hw-check.outputs.xpu_docker_env }} \
             -v "$(pwd)/test-results:/workspace/test-results" \
@@ -360,6 +366,12 @@ jobs:
             --network host \
             -e VLLM_TARGET_DEVICE=xpu \
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e http_proxy="${http_proxy:-}" \
+            -e https_proxy="${https_proxy:-}" \
+            -e HTTP_PROXY="${HTTP_PROXY:-}" \
+            -e HTTPS_PROXY="${HTTPS_PROXY:-}" \
+            -e no_proxy="${no_proxy:-localhost,127.0.0.1}" \
+            -e NO_PROXY="${NO_PROXY:-localhost,127.0.0.1}" \
             ${{ needs.hw-check.outputs.xpu_docker_groups }} \
             ${{ needs.hw-check.outputs.xpu_docker_env }} \
             -w /workspace \
