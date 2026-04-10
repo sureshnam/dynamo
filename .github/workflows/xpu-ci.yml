@@ -349,21 +349,45 @@ jobs:
     needs: [hw-check, xpu-single-gpu-test]
     runs-on: [self-hosted, xpu, intel-b70]
     timeout-minutes: 30
+    env:
+      # ai-dynamo 1.0.0 imports MultiModalUUIDDict from vllm.inputs, but the
+      # pinned vllm v0.17.1 build does not export that symbol. Downgrade to
+      # the last working ai-dynamo version inside the container.
+      COMPAT_DYNAMO_VERSION: "0.9.1"
+      WHEELS_DIR: /home/snampalli/xpu-ci-wheels
+      MODEL_HOST_PATH: /mnt/weka/data/llm-d-models-pv/models--Qwen--Qwen3-0.6B
+      MODEL_CONTAINER_PATH: /models/Qwen3-0.6B
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Verify wheels and model are present
+        run: |
+          test -f "${WHEELS_DIR}/ai_dynamo-${COMPAT_DYNAMO_VERSION}-py3-none-any.whl"
+          test -f "${WHEELS_DIR}/ai_dynamo_runtime-${COMPAT_DYNAMO_VERSION}-cp310-abi3-manylinux_2_28_x86_64.whl"
+          test -d "${MODEL_HOST_PATH}"
+          echo "All prerequisites present"
 
       - name: Run Dynamo aggregated serving on XPU
         run: |
           CONTAINER_NAME="dynamo-xpu-agg-test-${{ github.run_id }}"
 
-          # Start Dynamo aggregated serving in the background
+          # Start Dynamo aggregated serving in the background.
+          # Notes for B580/XPU:
+          #  - Mount local model dir (Dynamo's Rust ModelExpress client doesn't
+          #    honor http(s)_proxy env vars, so HF download fails behind proxy)
+          #  - Use --connector none to skip NixlConnector (defaults to cuda
+          #    kv_buffer which is unsupported on XPU)
+          #  - Downgrade ai-dynamo to ${COMPAT_DYNAMO_VERSION} for vllm 0.17.1
+          #    compatibility
           docker run -d \
             --name "${CONTAINER_NAME}" \
             --device /dev/dri \
             -v /dev/dri:/dev/dri \
             --shm-size=200m \
             --network host \
+            -v "${WHEELS_DIR}:/wheels:ro" \
+            -v "${MODEL_HOST_PATH}:${MODEL_CONTAINER_PATH}:ro" \
             -e VLLM_TARGET_DEVICE=xpu \
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
             -e http_proxy="${http_proxy:-}" \
@@ -377,7 +401,17 @@ jobs:
             -w /workspace \
             ${{ env.XPU_IMAGE_TAG }} \
             bash -c "
+              source /opt/dynamo/venv/bin/activate
               export VLLM_TARGET_DEVICE=xpu
+
+              # Replace ai-dynamo with vllm-0.17.1-compatible version
+              echo '=== Installing ai-dynamo ${COMPAT_DYNAMO_VERSION} ==='
+              uv pip uninstall ai-dynamo ai-dynamo-runtime 2>&1 | tail -3
+              rm -rf /opt/dynamo/venv/lib/python3.12/site-packages/dynamo
+              rm -rf /opt/dynamo/venv/lib/python3.12/site-packages/ai_dynamo*
+              uv pip install --no-deps \
+                /wheels/ai_dynamo_runtime-${COMPAT_DYNAMO_VERSION}-cp310-abi3-manylinux_2_28_x86_64.whl \
+                /wheels/ai_dynamo-${COMPAT_DYNAMO_VERSION}-py3-none-any.whl 2>&1 | tail -5
 
               # Start etcd (Dynamo's discovery backend)
               /usr/local/bin/etcd/etcd \
@@ -385,11 +419,9 @@ jobs:
                 --advertise-client-urls http://127.0.0.1:2379 \
                 --data-dir /tmp/etcd-data \
                 > /tmp/etcd.log 2>&1 &
-              ETCD_PID=\$!
 
               # Start NATS (Dynamo's message bus)
               /usr/bin/nats-server -js > /tmp/nats.log 2>&1 &
-              NATS_PID=\$!
 
               # Wait for etcd to be ready
               for i in \$(seq 1 30); do
@@ -402,7 +434,8 @@ jobs:
 
               python -m dynamo.frontend &
               DYN_SYSTEM_PORT=8081 python -m dynamo.vllm \
-                --model ${{ env.MODEL }} \
+                --model ${MODEL_CONTAINER_PATH} \
+                --connector none \
                 --enforce-eager \
                 --max-model-len 512 \
                 --max-num-seqs 2 \
@@ -442,11 +475,11 @@ jobs:
           for i in $(seq 1 5); do
             RESPONSE=$(curl -sf http://localhost:8000/v1/completions \
               -H "Content-Type: application/json" \
-              -d '{
-                "model": "${{ env.MODEL }}",
-                "prompt": "Hello, world",
-                "max_tokens": 16
-              }' 2>&1) || true
+              -d "{
+                \"model\": \"${MODEL_CONTAINER_PATH}\",
+                \"prompt\": \"Hello, world\",
+                \"max_tokens\": 16
+              }" 2>&1) || true
             if [ -n "$RESPONSE" ] && echo "$RESPONSE" | grep -q '"choices"'; then
               break
             fi
