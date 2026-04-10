@@ -45,6 +45,7 @@ jobs:
     runs-on: [self-hosted, xpu, intel-b70]
     outputs:
       xpu_docker_env: ${{ steps.detect-gpu.outputs.xpu_docker_env }}
+      xpu_docker_groups: ${{ steps.detect-gpu.outputs.xpu_docker_groups }}
       gpu_type: ${{ steps.detect-gpu.outputs.gpu_type }}
     steps:
       - name: Check Intel GPU availability and detect type
@@ -105,6 +106,19 @@ jobs:
             echo "gpu_type=data-center" >> "$GITHUB_OUTPUT"
           fi
           echo "xpu_docker_env=${DOCKER_ENV}" >> "$GITHUB_OUTPUT"
+
+          # Collect render device group IDs for --group-add (needed inside container
+          # so the non-root user can access /dev/dri/renderD* nodes)
+          DOCKER_GROUPS=""
+          for r in /dev/dri/renderD*; do
+            [ -e "$r" ] || continue
+            GID=$(stat -c '%g' "$r")
+            DOCKER_GROUPS="${DOCKER_GROUPS} --group-add ${GID}"
+          done
+          # De-duplicate
+          DOCKER_GROUPS=$(echo "$DOCKER_GROUPS" | tr ' ' '\n' | awk '!seen[$0]++' | tr '\n' ' ')
+          echo "Render group flags: ${DOCKER_GROUPS}"
+          echo "xpu_docker_groups=${DOCKER_GROUPS}" >> "$GITHUB_OUTPUT"
 
   # ============================================================================
   # BUILD XPU VLLM CONTAINER
@@ -188,6 +202,7 @@ jobs:
           docker run --rm \
             --device /dev/dri \
             -v /dev/dri:/dev/dri \
+            ${{ needs.hw-check.outputs.xpu_docker_groups }} \
             ${{ needs.hw-check.outputs.xpu_docker_env }} \
             ${{ env.XPU_IMAGE_TAG }} \
             python3 -c "
@@ -273,6 +288,7 @@ jobs:
             --network host \
             -e VLLM_TARGET_DEVICE=xpu \
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            ${{ needs.hw-check.outputs.xpu_docker_groups }} \
             ${{ needs.hw-check.outputs.xpu_docker_env }} \
             -v "$(pwd)/test-results:/workspace/test-results" \
             ${{ env.XPU_IMAGE_TAG }} \
@@ -340,6 +356,7 @@ jobs:
             --network host \
             -e VLLM_TARGET_DEVICE=xpu \
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            ${{ needs.hw-check.outputs.xpu_docker_groups }} \
             ${{ needs.hw-check.outputs.xpu_docker_env }} \
             -w /workspace \
             ${{ env.XPU_IMAGE_TAG }} \
