@@ -241,23 +241,36 @@ jobs:
       - name: Run CPU-only unit tests
         run: |
           mkdir -p test-results
-          # Container runs as non-root 'dynamo' user; make mount writable for it
-          chmod 777 test-results
+          # NOTE: cannot use bind-mount for the results dir — the runner is itself
+          # in a container that doesn't share its work directory with the host, so
+          # any host-relative `-v` path is bogus when interpreted by the host
+          # docker daemon. Instead we run the container without --rm, write the
+          # JUnit XML inside the container, then `docker cp` it out.
+          CONTAINER_NAME="xpu-cpu-tests-${{ github.run_id }}"
+          docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 
-          docker run --rm \
+          docker run --name "${CONTAINER_NAME}" \
             -w /workspace \
             --shm-size=200m \
             --network host \
-            -v "$(pwd)/test-results:/workspace/test-results" \
             -e VLLM_TARGET_DEVICE=xpu \
             ${{ env.XPU_TEST_IMAGE_TAG }} \
-            sh -c "
-              pytest -v --tb=short \
+            sh -c '
+              mkdir -p /workspace/test-results
+              # Capture full collection errors so they end up in CI logs/artifacts
+              pytest -v --tb=long \
                 --junitxml=/workspace/test-results/xpu-cpu-tests.xml \
                 --durations=10 \
-                -m 'vllm and gpu_0' \
-                || true
-            "
+                -m "vllm and gpu_0" \
+                2>&1 | tee /workspace/test-results/pytest-output.log
+              echo "pytest exit: $?" >> /workspace/test-results/pytest-output.log
+              exit 0
+            '
+
+          # Copy results out of the container into the runner's workspace
+          docker cp "${CONTAINER_NAME}:/workspace/test-results/." test-results/ || true
+          docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+          ls -la test-results/ || true
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -361,12 +374,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify wheels and model are present
+      - name: Verify wheels and model are present on host
         run: |
-          test -f "${WHEELS_DIR}/ai_dynamo-${COMPAT_DYNAMO_VERSION}-py3-none-any.whl"
-          test -f "${WHEELS_DIR}/ai_dynamo_runtime-${COMPAT_DYNAMO_VERSION}-cp310-abi3-manylinux_2_28_x86_64.whl"
-          test -d "${MODEL_HOST_PATH}"
-          echo "All prerequisites present"
+          # Cannot use plain `test -f` because the runner runs inside a
+          # container that does NOT see host paths. Verify via docker run,
+          # which goes through the host docker daemon and bind-mounts the
+          # actual host paths.
+          docker run --rm \
+            -v "${WHEELS_DIR}:/check-wheels:ro" \
+            -v "${MODEL_HOST_PATH}:/check-model:ro" \
+            ubuntu:24.04 bash -c "
+              set -e
+              test -f /check-wheels/ai_dynamo-${COMPAT_DYNAMO_VERSION}-py3-none-any.whl
+              test -f /check-wheels/ai_dynamo_runtime-${COMPAT_DYNAMO_VERSION}-cp310-abi3-manylinux_2_28_x86_64.whl
+              test -f /check-model/config.json
+              test -f /check-model/model.safetensors
+              ls /check-wheels/
+              echo 'All prerequisites present'
+            "
 
       - name: Run Dynamo aggregated serving on XPU
         run: |
