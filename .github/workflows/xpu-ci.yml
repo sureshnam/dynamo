@@ -378,6 +378,28 @@ jobs:
             ${{ env.XPU_IMAGE_TAG }} \
             bash -c "
               export VLLM_TARGET_DEVICE=xpu
+
+              # Start etcd (Dynamo's discovery backend)
+              /usr/local/bin/etcd/etcd \
+                --listen-client-urls http://127.0.0.1:2379 \
+                --advertise-client-urls http://127.0.0.1:2379 \
+                --data-dir /tmp/etcd-data \
+                > /tmp/etcd.log 2>&1 &
+              ETCD_PID=\$!
+
+              # Start NATS (Dynamo's message bus)
+              /usr/bin/nats-server -js > /tmp/nats.log 2>&1 &
+              NATS_PID=\$!
+
+              # Wait for etcd to be ready
+              for i in \$(seq 1 30); do
+                if curl -sf http://127.0.0.1:2379/health > /dev/null 2>&1; then
+                  echo 'etcd is ready'
+                  break
+                fi
+                sleep 1
+              done
+
               python -m dynamo.frontend &
               DYN_SYSTEM_PORT=8081 python -m dynamo.vllm \
                 --model ${{ env.MODEL }} \
