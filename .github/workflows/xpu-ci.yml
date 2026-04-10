@@ -241,6 +241,8 @@ jobs:
       - name: Run CPU-only unit tests
         run: |
           mkdir -p test-results
+          # Container runs as non-root 'dynamo' user; make mount writable for it
+          chmod 777 test-results
 
           docker run --rm \
             -w /workspace \
@@ -280,6 +282,7 @@ jobs:
       - name: Run vLLM XPU inference test
         run: |
           mkdir -p test-results
+          chmod 777 test-results
 
           docker run --rm \
             --device /dev/dri \
@@ -298,9 +301,10 @@ jobs:
           print('=== vLLM XPU Single-GPU Inference Test ===')
           print('Loading model: ${{ env.MODEL }}')
 
+          # Note: 'device' kwarg removed in newer vLLM — device is auto-detected
+          # from the build (VLLM_TARGET_DEVICE=xpu set in env)
           llm = LLM(
               model='${{ env.MODEL }}',
-              device='xpu',
               enforce_eager=True,
               max_model_len=512,
               max_num_seqs=2,
