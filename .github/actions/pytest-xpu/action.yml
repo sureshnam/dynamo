@@ -9,10 +9,12 @@ description: |
   initial XPU CI rollout so that this contribution is purely additive.
   A follow-up PR can unify them once the XPU pipeline is stable.
 
-  NOTE: this action assumes the runner is itself running directly on the
-  host (or in a container that shares its work directory with the host).
-  Bind mounts go through the host docker daemon, so $(pwd) inside the
-  runner must resolve to the same path on the host.
+  This action does NOT bind-mount the host's test-results directory into
+  the test container. Instead, pytest writes results inside the container
+  and we extract them with `docker cp` afterward. This avoids permission
+  issues when the container's non-root user (e.g. 'dynamo') cannot write
+  to a host-owned mount, and works in both standard and Docker-in-Docker
+  runner setups.
 
 inputs:
   image_tag:
@@ -55,16 +57,13 @@ runs:
     - name: Run pytest in XPU container
       shell: bash
       env:
-        CONTAINER_ID: test_${{ github.run_id }}_${{ github.run_attempt }}_${{ github.job }}
+        CONTAINER_ID: test_${{ github.run_id }}_${{ github.run_attempt }}_${{ github.job }}_pytest
         PYTEST_XML_FILE: pytest_test_report.xml
         HF_TOKEN: ${{ inputs.hf_token }}
       run: |
         set +e
 
         mkdir -p test-results
-        # Make the host-mounted test-results dir writable by the container's
-        # non-root user (uid != runner uid).
-        chmod 777 test-results
 
         # Determine parallelization based on parallel_mode input
         case "${{ inputs.parallel_mode }}" in
@@ -79,10 +78,8 @@ runs:
             ;;
         esac
 
-        PYTEST_CMD="pytest ${PARALLEL_OPTS} --dist=loadscope --continue-on-collection-errors -v --tb=short --basetemp=/tmp/pytest_temp -o cache_dir=/tmp/.pytest_cache --junitxml=/workspace/test-results/${PYTEST_XML_FILE} --alluredir=/workspace/test-results/allure-results --durations=10 -m \"${{ inputs.pytest_marks }}\""
+        PYTEST_CMD="mkdir -p /workspace/test-results /workspace/test-results/allure-results && pytest ${PARALLEL_OPTS} --dist=loadscope --continue-on-collection-errors -v --tb=short --basetemp=/tmp/pytest_temp -o cache_dir=/tmp/.pytest_cache --junitxml=/workspace/test-results/${PYTEST_XML_FILE} --alluredir=/workspace/test-results/allure-results --durations=10 -m \"${{ inputs.pytest_marks }}\""
 
-        TEST_RESULTS_DIR="$(pwd)/test-results"
-        echo "Test results will be saved to: ${TEST_RESULTS_DIR}"
         echo "Pytest command: ${PYTEST_CMD}"
 
         DOCKER_ENV_FLAGS=()
@@ -95,7 +92,9 @@ runs:
         DOCKER_ENV_FLAGS+=(--env "DYNAMO_TEST_WORKFLOW=${GITHUB_WORKFLOW}")
         DOCKER_ENV_FLAGS+=(--env "VLLM_TARGET_DEVICE=xpu")
 
-        docker run --rm \
+        # Run WITHOUT --rm so we can docker cp results out after pytest exits.
+        docker rm -f "${CONTAINER_ID}" 2>/dev/null || true
+        docker run \
           ${{ inputs.docker_device_flags }} \
           ${{ inputs.docker_group_flags }} \
           ${{ inputs.docker_env_flags }} \
@@ -105,8 +104,7 @@ runs:
           -w /workspace \
           --network host \
           "${DOCKER_ENV_FLAGS[@]}" \
-          --name "${CONTAINER_ID}_pytest" \
-          -v "${TEST_RESULTS_DIR}:/workspace/test-results" \
+          --name "${CONTAINER_ID}" \
           ${{ inputs.image_tag }} \
           sh -c "umask 0022 && ${PYTEST_CMD}"
 
@@ -114,11 +112,12 @@ runs:
         echo "TEST_EXIT_CODE=${TEST_EXIT_CODE}" >> "${GITHUB_ENV}"
         echo "Tests completed with exit code: ${TEST_EXIT_CODE}"
 
-        if [[ -f "${TEST_RESULTS_DIR}/${PYTEST_XML_FILE}" ]]; then
-          echo "Test results file found"
-        else
-          echo "WARNING: Test results file not found"
-        fi
+        # Extract results from the (now-stopped) container, then remove it.
+        docker cp "${CONTAINER_ID}:/workspace/test-results/." test-results/ 2>&1 || \
+          echo "WARNING: failed to docker cp test-results out of container"
+        docker rm -f "${CONTAINER_ID}" 2>/dev/null || true
+
+        ls -la test-results/ || true
         exit 0
 
     - name: Process test results
