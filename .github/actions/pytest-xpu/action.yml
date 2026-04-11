@@ -50,6 +50,14 @@ inputs:
     description: 'docker run -e flags from setup-xpu (e.g. UR_ADAPTERS_FORCE_LOAD)'
     required: false
     default: ''
+  pytest_ignore:
+    description: |
+      Space-separated list of pytest --ignore=PATH arguments. Use this to
+      skip test files that fail at collection time due to known upstream
+      issues (e.g. version mismatches between ai-dynamo and vllm in the
+      built image).
+    required: false
+    default: ''
 
 runs:
   using: "composite"
@@ -78,7 +86,13 @@ runs:
             ;;
         esac
 
-        PYTEST_CMD="mkdir -p /workspace/test-results /workspace/test-results/allure-results && pytest ${PARALLEL_OPTS} --dist=loadscope --continue-on-collection-errors -v --tb=short --basetemp=/tmp/pytest_temp -o cache_dir=/tmp/.pytest_cache --junitxml=/workspace/test-results/${PYTEST_XML_FILE} --alluredir=/workspace/test-results/allure-results --durations=10 -m \"${{ inputs.pytest_marks }}\""
+        # Build --ignore arguments from the pytest_ignore input
+        IGNORE_ARGS=""
+        for p in ${{ inputs.pytest_ignore }}; do
+          IGNORE_ARGS="${IGNORE_ARGS} --ignore=${p}"
+        done
+
+        PYTEST_CMD="mkdir -p /workspace/test-results /workspace/test-results/allure-results && pytest ${PARALLEL_OPTS} --dist=loadscope --continue-on-collection-errors -v --tb=short --basetemp=/tmp/pytest_temp -o cache_dir=/tmp/.pytest_cache --junitxml=/workspace/test-results/${PYTEST_XML_FILE} --alluredir=/workspace/test-results/allure-results --durations=10 ${IGNORE_ARGS} -m \"${{ inputs.pytest_marks }}\""
 
         echo "Pytest command: ${PYTEST_CMD}"
 
