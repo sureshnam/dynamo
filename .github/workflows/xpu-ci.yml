@@ -4,17 +4,11 @@
 name: XPU CI Pipeline (Intel GPU)
 
 on:
-  push:
-    branches:
-      - main
-      - 'xpu-ci-*'
-  pull_request:
-    paths:
-      - 'container/**'
-      - 'components/**'
-      - 'lib/**'
-      - 'examples/backends/vllm/launch/xpu/**'
-      - '.github/workflows/xpu-ci.yml'
+  # NOTE: automatic triggers are disabled while xpu-pr.yml is the active
+  # workflow. xpu-ci.yml is kept for the agg test (which depends on
+  # node-specific paths and a downgraded ai-dynamo wheel) and can be run
+  # manually from the Actions tab when needed. Re-enable push/pull_request
+  # triggers below if you want this workflow to run on every PR again.
   workflow_dispatch:
     inputs:
       model:
