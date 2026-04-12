@@ -37,6 +37,14 @@ env:
   XPU_RUNTIME_IMAGE: dynamo-vllm-xpu:${{ github.sha }}
   XPU_TEST_IMAGE: dynamo-vllm-xpu-test:${{ github.sha }}
 
+  # Host path to a pre-populated HuggingFace model cache. Tests that need
+  # models (e2e router, multimodal, predownload) load from this cache
+  # instead of downloading from huggingface.co. The runner administrator
+  # is responsible for pre-populating this cache with the required models.
+  # Currently needed: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+  # Use download-model.sh to add models to this cache.
+  XPU_HF_CACHE_PATH: /mnt/weka/data/llm-d-models-pv/hub
+
   # Test files (or directories) to skip in the XPU pipeline. These are NOT
   # bugs in the tests themselves — they are workarounds for known issues
   # we hit on XPU runners:
@@ -83,8 +91,8 @@ env:
     tests/kvbm_integration
     tests/test_predownload_models.py
     tests/frontend/test_vllm_prepost_integration.py
-    tests/mm_router
-    tests/router
+    # tests/mm_router and tests/router were previously ignored due to HF
+    # model download timeouts. They are now enabled via XPU_HF_CACHE_PATH.
 
   # Individual test functions to deselect (not whole files). Two unit tests
   # in test_vllm_unit.py are not XPU-specific failures — they appear broken
@@ -280,6 +288,7 @@ jobs:
           docker_env_flags: ${{ steps.setup-xpu.outputs.docker_env_flags }}
           pytest_ignore: ${{ env.XPU_PYTEST_IGNORE }}
           pytest_deselect: ${{ env.XPU_PYTEST_DESELECT }}
+          hf_cache_path: ${{ env.XPU_HF_CACHE_PATH }}
 
   # ============================================================================
   # SINGLE-GPU TESTS (1 XPU)
@@ -314,6 +323,7 @@ jobs:
           docker_env_flags: ${{ steps.setup-xpu.outputs.docker_env_flags }}
           pytest_ignore: ${{ env.XPU_PYTEST_IGNORE }}
           pytest_deselect: ${{ env.XPU_PYTEST_DESELECT }}
+          hf_cache_path: ${{ env.XPU_HF_CACHE_PATH }}
 
   # ============================================================================
   # MULTI-GPU TESTS
@@ -326,7 +336,10 @@ jobs:
     name: vllm-xpu-runtime
     needs: [changed-files, vllm-xpu-build, vllm-xpu-sanity]
     if: needs.changed-files.outputs.core == 'true' || needs.changed-files.outputs.vllm == 'true'
-    runs-on: [self-hosted, xpu, multi-gpu]
+    # TODO: use [self-hosted, xpu, multi-gpu] when multiple runner pools
+    # exist (e.g. 1-GPU pool vs 4-GPU pool). For now, all XPU jobs use the
+    # same runner and setup-xpu's min_gpus check gates GPU count at runtime.
+    runs-on: [self-hosted, xpu]
     timeout-minutes: 60
     steps:
       - name: Checkout repository
@@ -352,6 +365,7 @@ jobs:
           docker_env_flags: ${{ steps.setup-xpu.outputs.docker_env_flags }}
           pytest_ignore: ${{ env.XPU_PYTEST_IGNORE }}
           pytest_deselect: ${{ env.XPU_PYTEST_DESELECT }}
+          hf_cache_path: ${{ env.XPU_HF_CACHE_PATH }}
 
   # ============================================================================
   # FINAL STATUS CHECK (single required check on the PR)
