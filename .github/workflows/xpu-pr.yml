@@ -91,8 +91,6 @@ env:
     tests/kvbm_integration
     tests/test_predownload_models.py
     tests/frontend/test_vllm_prepost_integration.py
-    # tests/mm_router and tests/router were previously ignored due to HF
-    # model download timeouts. They are now enabled via XPU_HF_CACHE_PATH.
 
   # Individual test functions to deselect (not whole files). Two unit tests
   # in test_vllm_unit.py are not XPU-specific failures — they appear broken
