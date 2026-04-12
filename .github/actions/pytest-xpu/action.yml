@@ -53,9 +53,17 @@ inputs:
   pytest_ignore:
     description: |
       Space-separated list of pytest --ignore=PATH arguments. Use this to
-      skip test files that fail at collection time due to known upstream
-      issues (e.g. version mismatches between ai-dynamo and vllm in the
-      built image).
+      skip test files (or whole directories) that fail at collection time
+      due to known upstream issues (e.g. version mismatches between
+      ai-dynamo and vllm in the built image).
+    required: false
+    default: ''
+  pytest_deselect:
+    description: |
+      Space-separated list of pytest --deselect=NODEID arguments. Use this
+      to skip individual tests within a file when --ignore would be too
+      broad. Each entry must be a full pytest node ID, e.g.
+      "components/src/dynamo/vllm/tests/test_vllm_unit.py::test_foo".
     required: false
     default: ''
 
@@ -86,13 +94,17 @@ runs:
             ;;
         esac
 
-        # Build --ignore arguments from the pytest_ignore input
+        # Build --ignore and --deselect arguments
         IGNORE_ARGS=""
         for p in ${{ inputs.pytest_ignore }}; do
           IGNORE_ARGS="${IGNORE_ARGS} --ignore=${p}"
         done
+        DESELECT_ARGS=""
+        for n in ${{ inputs.pytest_deselect }}; do
+          DESELECT_ARGS="${DESELECT_ARGS} --deselect=${n}"
+        done
 
-        PYTEST_CMD="mkdir -p /workspace/test-results /workspace/test-results/allure-results && pytest ${PARALLEL_OPTS} --dist=loadscope --continue-on-collection-errors -v --tb=short --basetemp=/tmp/pytest_temp -o cache_dir=/tmp/.pytest_cache --junitxml=/workspace/test-results/${PYTEST_XML_FILE} --alluredir=/workspace/test-results/allure-results --durations=10 ${IGNORE_ARGS} -m \"${{ inputs.pytest_marks }}\""
+        PYTEST_CMD="mkdir -p /workspace/test-results /workspace/test-results/allure-results && pytest ${PARALLEL_OPTS} --dist=loadscope --continue-on-collection-errors -v --tb=short --basetemp=/tmp/pytest_temp -o cache_dir=/tmp/.pytest_cache --junitxml=/workspace/test-results/${PYTEST_XML_FILE} --alluredir=/workspace/test-results/allure-results --durations=10 ${IGNORE_ARGS} ${DESELECT_ARGS} -m \"${{ inputs.pytest_marks }}\""
 
         echo "Pytest command: ${PYTEST_CMD}"
 
