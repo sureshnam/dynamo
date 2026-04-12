@@ -129,11 +129,16 @@ runs:
         DOCKER_ENV_FLAGS+=(--env "DYNAMO_TEST_WORKFLOW=${GITHUB_WORKFLOW}")
         DOCKER_ENV_FLAGS+=(--env "VLLM_TARGET_DEVICE=xpu")
 
-        # Build optional HF cache mount
+        # Build optional HF cache mount. When a cache is provided, also set
+        # HF_HUB_OFFLINE=1 so that huggingface_hub never tries to reach the
+        # HF API (which times out behind corporate proxies). The tests will
+        # load models exclusively from the mounted cache.
         HF_CACHE_MOUNT=""
+        HF_OFFLINE_FLAG=""
         if [[ -n "${{ inputs.hf_cache_path }}" ]]; then
           HF_CACHE_MOUNT="-v ${{ inputs.hf_cache_path }}:/home/dynamo/.cache/huggingface/hub:ro"
-          echo "Mounting HF cache from ${{ inputs.hf_cache_path }}"
+          HF_OFFLINE_FLAG="-e HF_HUB_OFFLINE=1"
+          echo "Mounting HF cache from ${{ inputs.hf_cache_path }} (offline mode)"
         fi
 
         # Run WITHOUT --rm so we can docker cp results out after pytest exits.
@@ -143,6 +148,7 @@ runs:
           ${{ inputs.docker_group_flags }} \
           ${{ inputs.docker_env_flags }} \
           ${HF_CACHE_MOUNT} \
+          ${HF_OFFLINE_FLAG} \
           --shm-size=200m \
           --ulimit memlock=-1 \
           --ulimit stack=67108864 \

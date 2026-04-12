@@ -55,28 +55,19 @@ env:
   #     collection time. Once vllm-xpu and ai-dynamo versions are realigned
   #     in container/render.py, items in (1) below can be removed.
   #
-  # (2) tests/serve/conftest.py allocates ports starting at 8765. The XPU
-  #     pytest container uses --network host (matching upstream's pytest
-  #     action), so port allocation conflicts with whatever else is running
-  #     on the host. To re-enable, either give the runner a dedicated host
-  #     or drop --network host from pytest-xpu.
-  #
-  # (3) tests/kvbm_integration/* exercises the KV Block Manager which is
+  # (2) tests/kvbm_integration/* exercises the KV Block Manager which is
   #     a CUDA-only KV cache offloading layer. Will not run on XPU until
   #     KVBM grows an XPU backend (separate upstream effort).
   #
-  # (4) tests/test_predownload_models.py downloads models from HuggingFace
-  #     at conftest time. Hits the same proxy issue as the dynamo Rust
-  #     ModelExpress client; needs a runner-side HF cache or a model
-  #     mirror. Tracked separately.
+  # (3) tests/test_predownload_models.py has its own model download logic
+  #     that bypasses the HF cache mount. Ignored until it respects
+  #     HF_HUB_OFFLINE.
   #
-  # (5) tests/frontend/test_vllm_prepost_integration.py spins up a real
-  #     worker over the network — needs the same model staging.
+  # (4) tests/frontend/test_vllm_prepost_integration.py spins up a real
+  #     worker over the network — needs additional infra.
   #
-  # (6) tests/mm_router/ and tests/router/ are e2e tests that download
-  #     models (TinyLlama, etc.) from HuggingFace at fixture setup time.
-  #     Same proxy issue as (4). These are 300s-timeout errors, not XPU
-  #     bugs. Re-enable once a runner-side HF cache is available.
+  # NOTE: tests/mm_router, tests/router, and tests/serve are now enabled.
+  # Models are pre-staged via XPU_HF_CACHE_PATH and HF_HUB_OFFLINE=1.
   #
   # All items below are tracked TODOs for follow-up PRs.
   XPU_PYTEST_IGNORE: >-
@@ -87,7 +78,6 @@ env:
     components/src/dynamo/vllm/tests/test_vllm_video_handler.py
     components/src/dynamo/vllm/tests/test_vllm_worker_factory.py
     components/src/dynamo/vllm/tests/test_vllm_worker_handler.py
-    tests/serve
     tests/kvbm_integration
     tests/test_predownload_models.py
     tests/frontend/test_vllm_prepost_integration.py
