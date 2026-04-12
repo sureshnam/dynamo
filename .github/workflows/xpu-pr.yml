@@ -65,6 +65,11 @@ env:
   # (5) tests/frontend/test_vllm_prepost_integration.py spins up a real
   #     worker over the network — needs the same model staging.
   #
+  # (6) tests/mm_router/ and tests/router/ are e2e tests that download
+  #     models (TinyLlama, etc.) from HuggingFace at fixture setup time.
+  #     Same proxy issue as (4). These are 300s-timeout errors, not XPU
+  #     bugs. Re-enable once a runner-side HF cache is available.
+  #
   # All items below are tracked TODOs for follow-up PRs.
   XPU_PYTEST_IGNORE: >-
     components/src/dynamo/vllm/tests/multimodal_utils
@@ -78,6 +83,8 @@ env:
     tests/kvbm_integration
     tests/test_predownload_models.py
     tests/frontend/test_vllm_prepost_integration.py
+    tests/mm_router
+    tests/router
 
   # Individual test functions to deselect (not whole files). Two unit tests
   # in test_vllm_unit.py are not XPU-specific failures — they appear broken
