@@ -88,6 +88,8 @@ env:
     tests/kvbm_integration
     tests/test_predownload_models.py
     tests/frontend/test_vllm_prepost_integration.py
+    tests/mm_router
+    tests/router
 
   # Individual test functions to deselect (not whole files). Two unit tests
   # in test_vllm_unit.py are not XPU-specific failures — they appear broken
