@@ -45,6 +45,13 @@ env:
   # Use download-model.sh to add models to this cache.
   XPU_HF_CACHE_PATH: /mnt/weka/data/llm-d-models-pv/hub
 
+  # Host path to ai-dynamo 0.9.1 wheels compatible with vllm 0.17.1+xpu.
+  # The image ships ai-dynamo 1.0.0 which imports MultiModalUUIDDict from
+  # vllm.inputs — a symbol that doesn't exist in vllm 0.17.1. This
+  # workaround replaces ai-dynamo at container startup. Remove once the
+  # XPU image build pins compatible versions.
+  XPU_DYNAMO_COMPAT_WHEELS: /home/snampalli/xpu-ci-wheels
+
   # Test files (or directories) to skip in the XPU pipeline. These are NOT
   # bugs in the tests themselves — they are workarounds for known issues
   # we hit on XPU runners:
@@ -284,6 +291,7 @@ jobs:
           pytest_ignore: ${{ env.XPU_PYTEST_IGNORE }}
           pytest_deselect: ${{ env.XPU_PYTEST_DESELECT }}
           hf_cache_path: ${{ env.XPU_HF_CACHE_PATH }}
+          dynamo_compat_wheels_path: ${{ env.XPU_DYNAMO_COMPAT_WHEELS }}
 
   # ============================================================================
   # SINGLE-GPU TESTS (1 XPU)
@@ -319,6 +327,7 @@ jobs:
           pytest_ignore: ${{ env.XPU_PYTEST_IGNORE }}
           pytest_deselect: ${{ env.XPU_PYTEST_DESELECT }}
           hf_cache_path: ${{ env.XPU_HF_CACHE_PATH }}
+          dynamo_compat_wheels_path: ${{ env.XPU_DYNAMO_COMPAT_WHEELS }}
 
   # ============================================================================
   # MULTI-GPU TESTS
@@ -361,6 +370,7 @@ jobs:
           pytest_ignore: ${{ env.XPU_PYTEST_IGNORE }}
           pytest_deselect: ${{ env.XPU_PYTEST_DESELECT }}
           hf_cache_path: ${{ env.XPU_HF_CACHE_PATH }}
+          dynamo_compat_wheels_path: ${{ env.XPU_DYNAMO_COMPAT_WHEELS }}
 
   # ============================================================================
   # FINAL STATUS CHECK (single required check on the PR)

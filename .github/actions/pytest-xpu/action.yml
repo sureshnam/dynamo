@@ -66,6 +66,17 @@ inputs:
       "components/src/dynamo/vllm/tests/test_vllm_unit.py::test_foo".
     required: false
     default: ''
+  dynamo_compat_wheels_path:
+    description: |
+      Host path to a directory containing ai-dynamo and ai-dynamo-runtime
+      wheel files that are compatible with the vllm version in the XPU
+      image. When set, the action replaces the installed ai-dynamo
+      packages with these wheels before running tests. This is a
+      workaround for the ai-dynamo 1.0.0 / vllm 0.17.1+xpu version
+      mismatch (MultiModalUUIDDict import error).
+      Leave empty to skip the downgrade (use the image's default).
+    required: false
+    default: ''
   hf_cache_path:
     description: |
       Host path to a pre-populated HuggingFace model cache directory.
@@ -141,6 +152,17 @@ runs:
           echo "Mounting HF cache from ${{ inputs.hf_cache_path }} (offline mode)"
         fi
 
+        # Build optional dynamo compat wheels mount and pre-install command.
+        # When ai-dynamo in the image is incompatible with vllm-xpu, we
+        # replace it at container startup before running tests.
+        WHEELS_MOUNT=""
+        WHEELS_INSTALL=""
+        if [[ -n "${{ inputs.dynamo_compat_wheels_path }}" ]]; then
+          WHEELS_MOUNT="-v ${{ inputs.dynamo_compat_wheels_path }}:/dynamo-wheels:ro"
+          WHEELS_INSTALL="source /opt/dynamo/venv/bin/activate 2>/dev/null; uv pip uninstall ai-dynamo ai-dynamo-runtime 2>/dev/null; rm -rf /opt/dynamo/venv/lib/python3.12/site-packages/dynamo /opt/dynamo/venv/lib/python3.12/site-packages/ai_dynamo*; uv pip install --no-deps /dynamo-wheels/ai_dynamo_runtime-*.whl /dynamo-wheels/ai_dynamo-*.whl 2>&1 | tail -3; "
+          echo "Mounting dynamo compat wheels from ${{ inputs.dynamo_compat_wheels_path }}"
+        fi
+
         # Run WITHOUT --rm so we can docker cp results out after pytest exits.
         docker rm -f "${CONTAINER_ID}" 2>/dev/null || true
         docker run \
@@ -149,6 +171,7 @@ runs:
           ${{ inputs.docker_env_flags }} \
           ${HF_CACHE_MOUNT} \
           ${HF_OFFLINE_FLAG} \
+          ${WHEELS_MOUNT} \
           --shm-size=200m \
           --ulimit memlock=-1 \
           --ulimit stack=67108864 \
@@ -157,7 +180,7 @@ runs:
           "${DOCKER_ENV_FLAGS[@]}" \
           --name "${CONTAINER_ID}" \
           ${{ inputs.image_tag }} \
-          sh -c "umask 0022 && ${PYTEST_CMD}"
+          sh -c "umask 0022 && ${WHEELS_INSTALL}${PYTEST_CMD}"
 
         TEST_EXIT_CODE=$?
         # pytest exit code 5 = "no tests collected". This is not a failure —
