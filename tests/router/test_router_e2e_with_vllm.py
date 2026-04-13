@@ -28,7 +28,7 @@ from tests.router.helper import (
     wait_for_indexer_workers_active,
 )
 from tests.utils.constants import DefaultPort
-from tests.utils.device_utils import get_device_env_var, get_device_type, get_vllm_extra_args, get_vllm_extra_env
+from tests.utils.device_utils import get_device_env_var, get_device_type, get_kv_transfer_config, get_vllm_extra_args, get_vllm_extra_env
 from tests.utils.managed_process import ManagedProcess
 from tests.utils.port_utils import allocate_ports, deallocate_ports
 
@@ -198,17 +198,12 @@ class VLLMProcess(ManagedEngineProcessMixin):
 
             if disaggregation_mode is not None:
                 command.extend(["--disaggregation-mode", disaggregation_mode])
-                # NixlConnector requires CUDA kv_buffer; skip on XPU
-                if get_device_type() != "xpu":
-                    command.extend(
-                        [
-                            "--kv-transfer-config",
-                            '{"kv_connector":"NixlConnector","kv_role":"kv_both"}',
-                        ]
-                    )
-
-            # Add device-specific vllm arguments (e.g. --connector none on XPU)
-            command.extend(get_vllm_extra_args())
+                # Use device-aware kv-transfer-config: on XPU, sets
+                # kv_buffer_device="xpu" so NixlConnector uses VRAM
+                # via UCX/Level Zero instead of CUDA buffers.
+                command.extend(
+                    ["--kv-transfer-config", get_kv_transfer_config()]
+                )
 
             # Disable GPU graphs for faster startup & lower memory
             if enforce_eager:

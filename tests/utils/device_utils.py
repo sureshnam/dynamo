@@ -73,10 +73,6 @@ def get_device_env_var(device_type: DeviceType | None = None) -> str:
 def get_vllm_extra_args(device_type: DeviceType | None = None) -> list[str]:
     """Return additional vllm CLI arguments needed for this device type.
 
-    On XPU, vllm workers need --connector none because the default
-    NixlConnector assumes a CUDA kv_buffer device. This will be
-    removed once NixlConnector supports XPU.
-
     Args:
         device_type: "cuda" or "xpu". Auto-detected if None.
 
@@ -85,9 +81,30 @@ def get_vllm_extra_args(device_type: DeviceType | None = None) -> list[str]:
     """
     if device_type is None:
         device_type = get_device_type()
-    if device_type == "xpu":
-        return ["--connector", "none"]
+    # No extra args needed — NixlConnector supports both CUDA and XPU.
+    # On XPU, kv_buffer_device is set via get_kv_transfer_config().
     return []
+
+
+def get_kv_transfer_config(device_type: DeviceType | None = None) -> str:
+    """Return the kv-transfer-config JSON string for NixlConnector.
+
+    On CUDA, the default kv_buffer_device is "cuda". On XPU, it must
+    be explicitly set to "xpu" (VRAM) or "cpu" (DRAM). The upstream
+    vLLM NixlConnector supports both via _NIXL_SUPPORTED_DEVICE in
+    vllm/distributed/kv_transfer/kv_connector/v1/nixl/utils.py.
+
+    Args:
+        device_type: "cuda" or "xpu". Auto-detected if None.
+
+    Returns:
+        JSON string for --kv-transfer-config.
+    """
+    if device_type is None:
+        device_type = get_device_type()
+    if device_type == "xpu":
+        return '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_buffer_device":"xpu"}'
+    return '{"kv_connector":"NixlConnector","kv_role":"kv_both"}'
 
 
 def get_vllm_extra_env(device_type: DeviceType | None = None) -> dict[str, str]:
