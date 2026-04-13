@@ -73,6 +73,12 @@ def get_device_env_var(device_type: DeviceType | None = None) -> str:
 def get_vllm_extra_args(device_type: DeviceType | None = None) -> list[str]:
     """Return additional vllm CLI arguments needed for this device type.
 
+    On XPU, dynamo.vllm defaults to --connector nixl which creates
+    NixlConnector with kv_buffer_device="cuda". This fails on XPU
+    because the validation in nixl/utils.py only allows "xpu" or "cpu"
+    for the XPU platform. We must always pass --kv-transfer-config
+    with kv_buffer_device="xpu" to override the default.
+
     Args:
         device_type: "cuda" or "xpu". Auto-detected if None.
 
@@ -81,8 +87,13 @@ def get_vllm_extra_args(device_type: DeviceType | None = None) -> list[str]:
     """
     if device_type is None:
         device_type = get_device_type()
-    # No extra args needed — NixlConnector supports both CUDA and XPU.
-    # On XPU, kv_buffer_device is set via get_kv_transfer_config().
+    if device_type == "xpu":
+        # Always set kv_buffer_device="xpu" so NixlConnector uses
+        # Level Zero (ze_copy) transport instead of CUDA buffers.
+        return [
+            "--kv-transfer-config",
+            '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_buffer_device":"xpu"}',
+        ]
     return []
 
 
