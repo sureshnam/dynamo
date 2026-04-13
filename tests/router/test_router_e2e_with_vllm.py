@@ -198,12 +198,20 @@ class VLLMProcess(ManagedEngineProcessMixin):
 
             if disaggregation_mode is not None:
                 command.extend(["--disaggregation-mode", disaggregation_mode])
-                # Use device-aware kv-transfer-config: on XPU, sets
-                # kv_buffer_device="xpu" so NixlConnector uses VRAM
-                # via UCX/Level Zero instead of CUDA buffers.
-                command.extend(
-                    ["--kv-transfer-config", get_kv_transfer_config()]
-                )
+                # On CUDA, explicitly set NixlConnector for disagg mode
+                if get_device_type() != "xpu":
+                    command.extend(
+                        [
+                            "--kv-transfer-config",
+                            '{"kv_connector":"NixlConnector","kv_role":"kv_both"}',
+                        ]
+                    )
+
+            # On XPU, always set kv-transfer-config with
+            # kv_buffer_device="xpu" — needed for ALL modes because
+            # dynamo.vllm defaults to NixlConnector with
+            # kv_buffer_device="cuda" which is invalid on XPU.
+            command.extend(get_vllm_extra_args())
 
             # Disable GPU graphs for faster startup & lower memory
             if enforce_eager:
