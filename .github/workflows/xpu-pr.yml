@@ -66,8 +66,14 @@ env:
   # (4) tests/frontend/test_vllm_prepost_integration.py spins up a real
   #     worker over the network — needs additional infra.
   #
-  # NOTE: tests/mm_router, tests/router, and tests/serve are now enabled.
-  # Models are pre-staged via XPU_HF_CACHE_PATH and HF_HUB_OFFLINE=1.
+  # (5) tests/serve/conftest.py calls allocate_port(8765) at module level
+  #     during collection. With --network host, those ports conflict with
+  #     other processes on the shared host, breaking the entire pytest
+  #     session (not just serve tests). Re-ignored until the runner has
+  #     a dedicated host or we drop --network host.
+  #
+  # NOTE: tests/mm_router and tests/router are now enabled via
+  # XPU_HF_CACHE_PATH + HF_HUB_OFFLINE=1.
   #
   # All items below are tracked TODOs for follow-up PRs.
   XPU_PYTEST_IGNORE: >-
@@ -78,6 +84,7 @@ env:
     components/src/dynamo/vllm/tests/test_vllm_video_handler.py
     components/src/dynamo/vllm/tests/test_vllm_worker_factory.py
     components/src/dynamo/vllm/tests/test_vllm_worker_handler.py
+    tests/serve
     tests/kvbm_integration
     tests/test_predownload_models.py
     tests/frontend/test_vllm_prepost_integration.py
