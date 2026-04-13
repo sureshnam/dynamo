@@ -136,7 +136,7 @@ runs:
         HF_CACHE_MOUNT=""
         HF_OFFLINE_FLAG=""
         if [[ -n "${{ inputs.hf_cache_path }}" ]]; then
-          HF_CACHE_MOUNT="-v ${{ inputs.hf_cache_path }}:/home/dynamo/.cache/huggingface/hub:ro"
+          HF_CACHE_MOUNT="-v ${{ inputs.hf_cache_path }}:/home/dynamo/.cache/huggingface/hub"
           HF_OFFLINE_FLAG="-e HF_HUB_OFFLINE=1"
           echo "Mounting HF cache from ${{ inputs.hf_cache_path }} (offline mode)"
         fi
