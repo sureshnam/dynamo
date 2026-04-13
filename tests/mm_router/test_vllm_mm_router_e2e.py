@@ -28,6 +28,7 @@ import pytest
 import requests
 
 from tests.conftest import EtcdServer, NatsServer
+from tests.utils.device_utils import get_vllm_extra_args, get_vllm_extra_env
 from tests.utils.managed_process import ManagedProcess
 from tests.utils.payloads import check_models_api
 from tests.utils.port_utils import allocate_ports
@@ -81,6 +82,8 @@ def _make_process_env(log_level: str = "debug", **extra) -> dict[str, str]:
     env["DYN_LOG"] = log_level
     env["DYN_NAMESPACE"] = NAMESPACE
     env["DYN_REQUEST_PLANE"] = "tcp"
+    # Add device-specific env vars (e.g. VLLM_TARGET_DEVICE on XPU)
+    env.update(get_vllm_extra_env())
     env.update(extra)
     return env
 
@@ -121,6 +124,7 @@ class VLLMWorkerProcess(ManagedProcess):
                     f'"endpoint":"tcp://*:{kv_event_port}",'
                     f'"enable_kv_cache_events": true}}'
                 ),
+                *get_vllm_extra_args(),  # e.g. --connector none on XPU
             ],
             env=_make_process_env(DYN_SYSTEM_PORT=str(system_port)),
             health_check_urls=[

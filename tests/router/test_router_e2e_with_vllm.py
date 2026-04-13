@@ -28,6 +28,7 @@ from tests.router.helper import (
     wait_for_indexer_workers_active,
 )
 from tests.utils.constants import DefaultPort
+from tests.utils.device_utils import get_device_env_var, get_device_type, get_vllm_extra_args, get_vllm_extra_env
 from tests.utils.managed_process import ManagedProcess
 from tests.utils.port_utils import allocate_ports, deallocate_ports
 
@@ -197,14 +198,19 @@ class VLLMProcess(ManagedEngineProcessMixin):
 
             if disaggregation_mode is not None:
                 command.extend(["--disaggregation-mode", disaggregation_mode])
-                command.extend(
-                    [
-                        "--kv-transfer-config",
-                        '{"kv_connector":"NixlConnector","kv_role":"kv_both"}',
-                    ]
-                )
+                # NixlConnector requires CUDA kv_buffer; skip on XPU
+                if get_device_type() != "xpu":
+                    command.extend(
+                        [
+                            "--kv-transfer-config",
+                            '{"kv_connector":"NixlConnector","kv_role":"kv_both"}',
+                        ]
+                    )
 
-            # Disable CUDA graphs for faster startup & lower memory
+            # Add device-specific vllm arguments (e.g. --connector none on XPU)
+            command.extend(get_vllm_extra_args())
+
+            # Disable GPU graphs for faster startup & lower memory
             if enforce_eager:
                 command.append("--enforce-eager")
 
@@ -264,7 +270,7 @@ class VLLMProcess(ManagedEngineProcessMixin):
 
             env = os.environ.copy()  # Copy parent environment
             env_vars = {
-                "CUDA_VISIBLE_DEVICES": gpu_device,
+                get_device_env_var(): gpu_device,
                 "DYN_NAMESPACE": self.namespace,
                 "DYN_REQUEST_PLANE": request_plane,
                 "DYN_SYSTEM_PORT": str(system_port),
@@ -275,6 +281,9 @@ class VLLMProcess(ManagedEngineProcessMixin):
             # Add DYN_FILE_KV if using file storage backend
             if self.store_backend == "file" and "DYN_FILE_KV" in os.environ:
                 env_vars["DYN_FILE_KV"] = os.environ["DYN_FILE_KV"]
+
+            # Add device-specific env vars (e.g. VLLM_TARGET_DEVICE, UR adapter)
+            env_vars.update(get_vllm_extra_env())
 
             env.update(env_vars)
 
