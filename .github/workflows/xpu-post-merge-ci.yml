@@ -39,10 +39,6 @@ env:
     tests/kvbm_integration
     tests/test_predownload_models.py
     tests/frontend/test_vllm_prepost_integration.py
-    tests/fault_tolerance
-    tests/frontend/test_vllm.py
-    tests/mm_router
-    tests/router
 
   XPU_PYTEST_DESELECT: >-
     components/src/dynamo/vllm/tests/test_vllm_unit.py::test_headless_namespace_has_required_fields
