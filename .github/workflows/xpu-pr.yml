@@ -77,20 +77,17 @@ env:
   # XPU_HF_CACHE_PATH + HF_HUB_OFFLINE=1.
   #
   # All items below are tracked TODOs for follow-up PRs.
+  # Tests to skip. With vllm 0.19.0, the ai-dynamo/vllm version mismatch
+  # is resolved. Remaining ignores are for infrastructure issues only:
+  #   - tests/serve: conftest.py port allocator conflicts with --network host
+  #   - tests/kvbm_integration: CUDA-only KV Block Manager
+  #   - tests/test_predownload_models: bypasses HF cache mount
+  #   - tests/frontend/test_vllm_prepost_integration: needs additional infra
   XPU_PYTEST_IGNORE: >-
-    components/src/dynamo/vllm/tests/multimodal_utils
-    components/src/dynamo/vllm/tests/test_vllm_chat_message_utils.py
-    components/src/dynamo/vllm/tests/test_vllm_prompt_embeds.py
-    components/src/dynamo/vllm/tests/test_vllm_sleep_wake_handlers.py
-    components/src/dynamo/vllm/tests/test_vllm_video_handler.py
-    components/src/dynamo/vllm/tests/test_vllm_worker_factory.py
-    components/src/dynamo/vllm/tests/test_vllm_worker_handler.py
     tests/serve
     tests/kvbm_integration
     tests/test_predownload_models.py
     tests/frontend/test_vllm_prepost_integration.py
-    tests/mm_router
-    tests/router
 
   # Individual test functions to deselect (not whole files). Two unit tests
   # in test_vllm_unit.py are not XPU-specific failures — they appear broken

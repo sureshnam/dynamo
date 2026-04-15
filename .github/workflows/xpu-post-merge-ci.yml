@@ -35,21 +35,10 @@ env:
   # Test files/directories to skip. Same list as xpu-pr.yml — see
   # that file for detailed comments on each entry.
   XPU_PYTEST_IGNORE: >-
-    components/src/dynamo/vllm/tests/multimodal_utils
-    components/src/dynamo/vllm/tests/test_vllm_chat_message_utils.py
-    components/src/dynamo/vllm/tests/test_vllm_prompt_embeds.py
-    components/src/dynamo/vllm/tests/test_vllm_sleep_wake_handlers.py
-    components/src/dynamo/vllm/tests/test_vllm_video_handler.py
-    components/src/dynamo/vllm/tests/test_vllm_worker_factory.py
-    components/src/dynamo/vllm/tests/test_vllm_worker_handler.py
     tests/serve
     tests/kvbm_integration
     tests/test_predownload_models.py
     tests/frontend/test_vllm_prepost_integration.py
-    tests/mm_router
-    tests/router
-    tests/fault_tolerance
-    tests/frontend/test_vllm.py
 
   XPU_PYTEST_DESELECT: >-
     components/src/dynamo/vllm/tests/test_vllm_unit.py::test_headless_namespace_has_required_fields
