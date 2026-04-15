@@ -78,16 +78,20 @@ env:
   #
   # All items below are tracked TODOs for follow-up PRs.
   # Tests to skip. With vllm 0.19.0, the ai-dynamo/vllm version mismatch
-  # is resolved. Remaining ignores are for infrastructure issues only:
-  #   - tests/serve: conftest.py port allocator conflicts with --network host
-  #   - tests/kvbm_integration: CUDA-only KV Block Manager
-  #   - tests/test_predownload_models: bypasses HF cache mount
-  #   - tests/frontend/test_vllm_prepost_integration: needs additional infra
+  # is resolved and unit tests pass. E2e tests that launch vllm workers
+  # are still blocked because the test harness uses CUDA_VISIBLE_DEVICES
+  # and the installed dynamo package doesn't include the XPU device_utils
+  # changes. These will be enabled once the test harness is upstreamed
+  # with device-agnostic support (PR #8062 and related).
   XPU_PYTEST_IGNORE: >-
     tests/serve
     tests/kvbm_integration
     tests/test_predownload_models.py
     tests/frontend/test_vllm_prepost_integration.py
+    tests/fault_tolerance
+    tests/frontend/test_vllm.py
+    tests/mm_router
+    tests/router
 
   # Individual test functions to deselect (not whole files). Two unit tests
   # in test_vllm_unit.py are not XPU-specific failures — they appear broken
